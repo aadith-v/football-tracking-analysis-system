@@ -34,14 +34,15 @@ print("FPS:", fps)
 
 cv2.namedWindow("Football Analytics", cv2.WINDOW_NORMAL)
 # MAIN LOOP
-
+frame_count = 0
 while True:
     success, frame = cap.read()
-
     if not success:
         break
-
-    results = model.track(frame, persist=True, classes=[0])
+    
+    
+    frame_count += 1
+    results = model.track(frame, persist=True, classes=[0],verbose=False)
 
     
     # PLAYER PROCESSING
@@ -142,7 +143,7 @@ while True:
     
     # TEAM DETECTION
     
-    if len(player_colors) >= 4:
+    if len(player_colors) >= 4 and frame_count % 30 == 0:
 
         color_data = list(player_colors.values())
 
