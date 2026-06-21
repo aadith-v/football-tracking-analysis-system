@@ -25,13 +25,14 @@ player_teams = {}
 
 # MODEL + VIDEO
 
-model = YOLO("yolov8n.pt")
+model = YOLO("yolov8s.pt")
 
-cap = cv2.VideoCapture("videos/NeymarFoul.mp4")
+cap = cv2.VideoCapture("videos/ronaldoshot.mp4")
 
 fps = cap.get(cv2.CAP_PROP_FPS)
+print("FPS:", fps)
 
-
+cv2.namedWindow("Football Analytics", cv2.WINDOW_NORMAL)
 # MAIN LOOP
 
 while True:
