@@ -1,3 +1,6 @@
+from time import time
+from tracemalloc import start
+
 from ultralytics import YOLO
 from sklearn.cluster import KMeans
 import cv2
@@ -10,7 +13,7 @@ TARGET_ID = 25
 
 
 # PLAYER DATA
-
+DEBUG = False
 player_positions = {}
 total_distance = {}
 player_speed = {}
@@ -20,20 +23,35 @@ heatmap_data = {}
 
 player_colors = {}
 player_teams = {}
-
+ball_position = None
+ball_path = []
+ball_positions = []
+interpolated_ball_positions = []
+total_frames = 0
+ball_detected_frames = 0
 
 
 # MODEL + VIDEO
 
-model = YOLO("models/player_detection_best.pt")
-model.to("cuda")
+player_model = YOLO("models/player_detection_best.pt")
+ball_model = YOLO("models/football-ball-detection.pt")
 
-cap = cv2.VideoCapture("videos/kimmich.mp4")
+print("PLAYER MODEL:", player_model.names)
+print("BALL MODEL:", ball_model.names)
+
+player_model.to("cuda")
+ball_model.to("cuda")
+
+
+cap = cv2.VideoCapture("videos/NeymarFoul.mp4")
 
 fps = cap.get(cv2.CAP_PROP_FPS)
 print("FPS:", fps)
 
 cv2.namedWindow("Football Analytics", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("Football Analytics", 1200, 700)
+
+
 # MAIN LOOP
 frame_count = 0
 while True:
@@ -41,24 +59,99 @@ while True:
     if not success:
         break
     
-    
+    ball_found = False
     frame_count += 1
-    results = model.track(
-    frame,
-    persist=True,
-    imgsz=416,
-    verbose=False
-)
+    total_frames += 1
+   
+    
+    player_results = player_model.track(
+        frame,
+        persist=True,
+        imgsz=960,
+        verbose=False
+    )
 
+    ball_results = ball_model.predict(
+        frame,
+        imgsz=960,
+        conf=0.2,
+        verbose=False
+    )
     
     # PLAYER PROCESSING
-    
-    for box in results[0].boxes:
-        
-        cls = int(box.cls[0])
+    for box in ball_results[0].boxes:
+
         conf = float(box.conf[0])
 
-        if model.names[cls] != "player":
+        if conf < 0.2:
+            continue
+
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+
+        cv2.putText(
+        frame,
+        f"BALL {conf:.2f}",
+        (x1, y1 - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 255, 255),
+         2
+        )
+        
+        
+        ball_position = (center_x, center_y)
+        if len(ball_positions) > 0 and ball_positions[-1] is not None:
+
+            old_x, old_y = ball_positions[-1]
+
+            jump = math.dist((old_x, old_y), ball_position)
+
+            if jump > 40:
+                ball_found = False
+                continue
+        
+        ball_found = True
+            
+
+        ball_path.append(ball_position)
+
+        if len(ball_path) > 50:
+            ball_path.pop(0)
+                 
+        ball_detected_frames += 1     
+        break
+        
+        
+    for box in player_results[0].boxes:
+           
+        cls = int(box.cls[0])
+        conf = float(box.conf[0])
+        
+        label = player_model.names[cls]
+        
+        
+        # if label == "ball":
+           
+               
+        #    x1, y1, x2, y2 = map(int, box.xyxy[0])
+        #    center_x = (x1 + x2) // 2
+        #    center_y = (y1 + y2) // 2
+           
+        #    ball_position = (center_x,center_y)
+        #    ball_found = True
+        #    ball_detected_frames += 1
+        #    ball_path.append(ball_position)
+        #    if len(ball_path) > 50:
+        #        ball_path.pop(0)
+        #    print(f"BALL ID={ball_id} CONF={conf:.2f} POS=({center_x},{center_y})")
+    
+    
+        if player_model.names[cls] != "player":
            continue
 
         if conf < 0.5:
@@ -144,7 +237,29 @@ while True:
             if len(player_paths[track_id]) > 20:
 
                 player_paths[track_id].pop(0)
+                
+    if ball_found:
+        ball_positions.append(ball_position)
+    else:
+        ball_positions.append(None)
+       
+    if len(ball_positions) >= 3:
 
+       p1 = ball_positions[-3]
+       p2 = ball_positions[-2]
+       p3 = ball_positions[-1]
+
+       if p1 is not None and p2 is None and p3 is not None:
+
+           x = (p1[0] + p3[0]) // 2
+           y = (p1[1] + p3[1]) // 2
+
+           ball_positions[-2] = (x, y)
+           
+           
+    if DEBUG and len(ball_positions) >= 5:
+        print(ball_positions[-5:])
+    
     
     # TEAM DETECTION
     
@@ -167,19 +282,19 @@ while True:
     
     # DRAWING
 
-    for box in results[0].boxes:
+    for box in player_results[0].boxes:
 
         cls = int(box.cls[0])
         conf = float(box.conf[0])
 
-        label = model.names[cls]
+        label = player_model.names[cls]
 
-        if label not in ["player", "ball"]:
-           continue
+        if label != "player":
+            continue
 
         if conf < 0.5:
-           continue
-
+            continue
+ 
         if box.id is None:
             continue
 
@@ -208,6 +323,9 @@ while True:
         cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
         cv2.circle(frame, (center_x, center_y), 5, (0, 255, 255), -1)
+        
+        for i in range(1,len(ball_path)):
+            cv2.line(frame, ball_path[i-1], ball_path[i], (0, 255, 255), 2)
 
         if track_id == TARGET_ID and track_id in player_paths:
 
@@ -249,6 +367,16 @@ while True:
 
 
 # CLEANUP
+if DEBUG:
+    print()
+    print("TOTAL FRAMES:", total_frames)
+    print("BALL DETECTED:", ball_detected_frames)
 
+if total_frames > 0:
+    print(
+        "DETECTION RATE:",
+        round(ball_detected_frames / total_frames * 100, 2),
+        "%"
+    )
 cap.release()
 cv2.destroyAllWindows()
