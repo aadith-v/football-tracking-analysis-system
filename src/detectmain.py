@@ -1,12 +1,12 @@
 from time import time
 from tracemalloc import start
-
+import numpy as np
 from ultralytics import YOLO
 from sklearn.cluster import KMeans
 import cv2
 import math
-
-
+from pitch_config import PITCH_POINTS
+from pitch_map import create_pitch
 # CONFIG
 
 TARGET_ID = 25
@@ -35,22 +35,24 @@ ball_detected_frames = 0
 
 player_model = YOLO("models/player_detection_best.pt")
 ball_model = YOLO("models/football-ball-detection.pt")
+pitch_model = YOLO("models/football-pitch-detection.pt")
 
 print("PLAYER MODEL:", player_model.names)
 print("BALL MODEL:", ball_model.names)
-
+print("PITCH MODEL:", pitch_model.names)
 player_model.to("cuda")
 ball_model.to("cuda")
+pitch_model.to("cuda")
 
 
-cap = cv2.VideoCapture("videos/NeymarFoul.mp4")
+cap = cv2.VideoCapture("videos/messi.mp4")
 
 fps = cap.get(cv2.CAP_PROP_FPS)
 print("FPS:", fps)
 
 cv2.namedWindow("Football Analytics", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("Football Analytics", 1200, 700)
-
+pitch_template = cv2.imread("src/pitch.png")
 
 # MAIN LOOP
 frame_count = 0
@@ -58,6 +60,9 @@ while True:
     success, frame = cap.read()
     if not success:
         break
+    
+    pitch = create_pitch()
+    
     
     ball_found = False
     frame_count += 1
@@ -77,6 +82,113 @@ while True:
         conf=0.2,
         verbose=False
     )
+    
+    pitch_results = pitch_model.predict(
+    frame,
+    imgsz=960,
+    verbose=False
+    )
+    
+    
+    
+    if (
+        pitch_results[0].keypoints is not None
+        and len(pitch_results[0].keypoints.xy) > 0
+    ):
+
+        pts = pitch_results[0].keypoints.xy[0].cpu().numpy()
+        confs = pitch_results[0].keypoints.conf[0].cpu().numpy()
+
+        valid_count = 0
+        image_points = []
+        pitch_points = []
+
+        for i, ((x, y), conf) in enumerate(zip(pts, confs)):
+
+            if conf > 0.3:
+                if i in PITCH_POINTS:
+
+                    image_points.append(
+                    (int(x), int(y))
+                    )
+
+                    pitch_points.append(
+                        PITCH_POINTS[i]
+                    )
+                
+                valid_count += 1
+
+                cv2.circle(
+                    frame,
+                    (int(x), int(y)),
+                    5,
+                    (0, 255, 0),
+                    -1
+                )
+
+                cv2.putText(
+                    frame,
+                    f"KP {i}",
+                    (int(x) + 8, int(y)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 0),
+                    2
+                )
+                
+                
+                
+        cv2.putText(
+        frame,
+        f"KEYPOINTS: {valid_count}",
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0),
+        2
+    )
+        
+    
+    if len(image_points) >= 4:
+
+        image_points = np.array(
+            image_points,
+            dtype=np.float32
+        )
+
+        pitch_points = np.array(
+            pitch_points,
+            dtype=np.float32
+        )
+
+        homography_matrix, status = cv2.findHomography(
+            image_points,
+            pitch_points
+        )
+        
+        
+        if homography_matrix is not None:
+
+            determinant = np.linalg.det(homography_matrix)
+
+            print(f"H DET = {determinant:.6f}")
+            
+        if homography_matrix is not None:
+            print("H MATRIX CREATED")
+    
+        if homography_matrix is not None:
+
+            cv2.putText(
+                frame,
+                "H MATRIX READY",
+                (20, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 0),
+                2
+            )
+    
+    
     
     # PLAYER PROCESSING
     for box in ball_results[0].boxes:
@@ -170,6 +282,49 @@ while True:
         center_y = (y1 + y2) // 2
 
         new_center = (center_x, center_y)
+        
+        if homography_matrix is not None:
+
+            image_point = np.array(
+                [[[center_x, center_y]]],
+                dtype=np.float32
+        )
+
+        pitch_point = cv2.perspectiveTransform(
+            image_point,
+            homography_matrix
+        )
+
+        pitch_x = pitch_point[0][0][0]
+        pitch_y = pitch_point[0][0][1]
+
+        print(
+            f"Player {track_id} -> "
+            f"Pitch ({pitch_x:.2f}, {pitch_y:.2f})"
+        )
+        
+        if not (0 <= pitch_x <= 105 and 0 <= pitch_y <= 68):
+            continue
+        draw_x = int(pitch_x * 10)
+        draw_y = int(pitch_y * 10)
+
+        cv2.circle(
+            pitch,
+            (draw_x, draw_y),
+            5,
+            (0, 0, 255),
+            -1
+        )
+        
+        cv2.putText(
+            pitch,
+            str(track_id),
+            (draw_x + 8, draw_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (255, 255, 255),
+            1
+        )
 
         
         # JERSEY COLOR EXTRACTION 
@@ -361,6 +516,7 @@ while True:
     # DISPLAY
     
     cv2.imshow("Football Analytics", frame)
+    cv2.imshow("Mini Pitch", pitch)
 
     if cv2.waitKey(1) == 27:
         break
