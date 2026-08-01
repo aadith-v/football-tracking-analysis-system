@@ -1,5 +1,21 @@
-from time import time
-from tracemalloc import start
+"""
+Football Analytics System
+
+Pipeline:
+1. Read video
+2. Detect players (YOLO)
+3. Detect ball (YOLO)
+4. Detect pitch keypoints
+5. Compute homography
+6. Project players onto tactical pitch
+7. Estimate player distance and speed
+8. Classify teams using jersey colors
+9. Visualize analytics
+"""
+
+
+
+
 import numpy as np
 from ultralytics import YOLO
 from sklearn.cluster import KMeans
@@ -7,6 +23,8 @@ import cv2
 import math
 from pitch_config import PITCH_POINTS
 from pitch_map import create_pitch
+
+
 # CONFIG
 
 TARGET_ID = 25
